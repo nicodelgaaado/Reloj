@@ -76,6 +76,24 @@ class AnalogChronographWidget(QWidget):
             painter.setPen(tick_pen)
             painter.drawLine(inner, outer)
 
+        # Hour numerals.
+        painter.setPen(QPen(QColor("#111827")))
+        font = painter.font()
+        font.setBold(True)
+        font.setPointSizeF(radius * 0.18)
+        painter.setFont(font)
+        numeral_box = radius * 0.22
+        for hour in range(1, 13):
+            angle = hour * 30.0
+            position = self._point_on_circle(radius * 0.65, angle)
+            rect = QRectF(
+                position.x() - numeral_box,
+                position.y() - numeral_box,
+                numeral_box * 2,
+                numeral_box * 2,
+            )
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(hour))
+
         painter.restore()
 
     def _draw_hands(self, painter: QPainter, max_radius: float, snapshot: ChronographSnapshot) -> None:
