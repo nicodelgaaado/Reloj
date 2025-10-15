@@ -80,9 +80,9 @@ class AnalogChronographWidget(QWidget):
         painter.setPen(QPen(QColor("#111827")))
         font = painter.font()
         font.setBold(True)
-        font.setPointSizeF(radius * 0.18)
+        font.setPointSizeF(radius * 0.14)
         painter.setFont(font)
-        numeral_box = radius * 0.22
+        numeral_box = radius * 0.18
         for hour in range(1, 13):
             angle = hour * 30.0
             position = self._point_on_circle(radius * 0.65, angle)
