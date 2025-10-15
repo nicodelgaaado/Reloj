@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable
 
 from .linked_list import DoublyCircularLinkedList
@@ -71,36 +71,115 @@ class HandRing:
 class ChronographEngine:
     """Coordinates hour, minute, and second hands using circular linked lists."""
 
+    MODE_CLOCK = "clock"
+    MODE_STOPWATCH = "stopwatch"
+
     def __init__(self, time_source: Callable[[], datetime] | None = None) -> None:
         self._time_source = time_source or datetime.now
         self._seconds_hand = HandRing(positions=60, degrees_per_step=6.0)
         self._minutes_hand = HandRing(positions=60, degrees_per_step=6.0)
         self._hours_hand = HandRing(positions=720, degrees_per_step=0.5)  # 12h * 60 minutes
+        self._mode: str = self.MODE_CLOCK
+        self._stopwatch_running = False
+        self._stopwatch_accumulated = timedelta()
+        self._stopwatch_start_time: datetime | None = None
+
+    @property
+    def mode(self) -> str:
+        return self._mode
 
     def set_time_source(self, time_source: Callable[[], datetime]) -> None:
         self._time_source = time_source
 
+    def current_time(self) -> datetime:
+        """Return the current time from the time source."""
+        return self._time_source()
+
+    def set_mode(self, mode: str) -> None:
+        if mode not in {self.MODE_CLOCK, self.MODE_STOPWATCH}:
+            raise ValueError("mode must be 'clock' or 'stopwatch'.")
+        if self._mode == mode:
+            return
+        if mode == self.MODE_CLOCK:
+            self._stopwatch_running = False
+            self._stopwatch_start_time = None
+        self._mode = mode
+
+    def start_stopwatch(self) -> None:
+        if self._mode != self.MODE_STOPWATCH:
+            self.set_mode(self.MODE_STOPWATCH)
+        if not self._stopwatch_running:
+            self._stopwatch_running = True
+            self._stopwatch_start_time = self.current_time()
+
+    def stop_stopwatch(self) -> None:
+        if not self._stopwatch_running:
+            return
+        now = self.current_time()
+        if self._stopwatch_start_time is not None:
+            self._stopwatch_accumulated += now - self._stopwatch_start_time
+        self._stopwatch_running = False
+        self._stopwatch_start_time = None
+
+    def reset_stopwatch(self) -> None:
+        self._stopwatch_accumulated = timedelta()
+        if self._stopwatch_running:
+            self._stopwatch_start_time = self.current_time()
+        else:
+            self._stopwatch_start_time = None
+
+    def is_stopwatch_running(self) -> bool:
+        return self._stopwatch_running
+
+    def stopwatch_elapsed(self) -> timedelta:
+        elapsed = self._stopwatch_accumulated
+        if self._stopwatch_running and self._stopwatch_start_time is not None:
+            elapsed += self.current_time() - self._stopwatch_start_time
+        return elapsed
+
     def snapshot(self) -> ChronographSnapshot:
         """Produce the latest hand angles based on the time source."""
-        now = self._time_source()
+        if self._mode == self.MODE_STOPWATCH:
+            elapsed = self.stopwatch_elapsed()
+            seconds_total = elapsed.total_seconds()
+            seconds_float = seconds_total % 60.0
+            seconds_index = int(seconds_float)
+            seconds_fraction = seconds_float - seconds_index
+            self._seconds_hand.move_to_index(seconds_index)
+            seconds_angle = self._seconds_hand.angle_with_fraction(seconds_fraction)
 
-        seconds_float = now.second + now.microsecond / 1_000_000.0
-        seconds_index = int(seconds_float) % 60
-        seconds_fraction = seconds_float - seconds_index
-        self._seconds_hand.move_to_index(seconds_index)
-        seconds_angle = self._seconds_hand.angle_with_fraction(seconds_fraction)
+            minutes_total = seconds_total / 60.0
+            minutes_float = minutes_total % 60.0
+            minutes_index = int(minutes_float)
+            minutes_fraction = minutes_float - minutes_index
+            self._minutes_hand.move_to_index(minutes_index)
+            minutes_angle = self._minutes_hand.angle_with_fraction(minutes_fraction)
 
-        minutes_float = now.minute + seconds_float / 60.0
-        minutes_index = int(minutes_float) % 60
-        minutes_fraction = minutes_float - minutes_index
-        self._minutes_hand.move_to_index(minutes_index)
-        minutes_angle = self._minutes_hand.angle_with_fraction(minutes_fraction)
+            total_minutes = minutes_total % 720.0  # keep within 12 hours
+            hours_index = int(total_minutes)
+            hours_fraction = total_minutes - hours_index
+            self._hours_hand.move_to_index(hours_index)
+            hours_angle = self._hours_hand.angle_with_fraction(hours_fraction)
+        else:
+            now = self.current_time()
 
-        total_minutes = (now.hour % 12) * 60 + minutes_float
-        hours_index = int(total_minutes) % 720
-        hours_fraction = total_minutes - hours_index
-        self._hours_hand.move_to_index(hours_index)
-        hours_angle = self._hours_hand.angle_with_fraction(hours_fraction)
+            seconds_float = now.second + now.microsecond / 1_000_000.0
+            seconds_index = int(seconds_float) % 60
+            seconds_fraction = seconds_float - seconds_index
+            self._seconds_hand.move_to_index(seconds_index)
+            seconds_angle = self._seconds_hand.angle_with_fraction(seconds_fraction)
+
+            minutes_float = now.minute + seconds_float / 60.0
+            minutes_index = int(minutes_float) % 60
+            minutes_fraction = minutes_float - minutes_index
+            self._minutes_hand.move_to_index(minutes_index)
+            minutes_angle = self._minutes_hand.angle_with_fraction(minutes_fraction)
+
+            total_minutes = (now.hour % 12) * 60 + minutes_float
+            hours_index = int(total_minutes) % 720
+            hours_fraction = total_minutes - hours_index
+            self._hours_hand.move_to_index(hours_index)
+            hours_angle = self._hours_hand.angle_with_fraction(hours_fraction)
 
         return ChronographSnapshot(
             seconds_angle=seconds_angle,

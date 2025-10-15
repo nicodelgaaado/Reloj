@@ -16,7 +16,16 @@ from PySide6.QtGui import (
     QPen,
     QRadialGradient,
 )
-from PySide6.QtWidgets import QMainWindow, QWidget
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .engine import ChronographEngine, ChronographSnapshot
 
@@ -223,5 +232,147 @@ class ChronographWindow(QMainWindow):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Chronograph Clock")
-        self.setCentralWidget(AnalogChronographWidget())
-        self.resize(600, 600)
+        self._engine = ChronographEngine()
+        self._analog_widget = AnalogChronographWidget(engine=self._engine)
+        self._analog_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        central = QWidget(self)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(18)
+
+        self._mode_clock_button = QPushButton("Clock")
+        self._mode_clock_button.setCheckable(True)
+        self._mode_stopwatch_button = QPushButton("Stopwatch")
+        self._mode_stopwatch_button.setCheckable(True)
+        self._mode_group = QButtonGroup(self)
+        self._mode_group.setExclusive(True)
+        self._mode_group.addButton(self._mode_clock_button, 0)
+        self._mode_group.addButton(self._mode_stopwatch_button, 1)
+        self._mode_clock_button.setChecked(True)
+        self._mode_group.idClicked.connect(self._on_mode_selected)
+        mode_style = (
+            "QPushButton {background-color: rgba(15, 23, 42, 160); color: #e2e8f0; padding: 8px 18px; border-radius: 14px; font-weight: 600;}"
+            "QPushButton:checked {background-color: #38bdf8; color: #0f172a;}"
+        )
+        self._mode_clock_button.setStyleSheet(mode_style)
+        self._mode_stopwatch_button.setStyleSheet(mode_style)
+
+        mode_layout = QHBoxLayout()
+        mode_layout.setSpacing(12)
+        mode_layout.addStretch(1)
+        mode_layout.addWidget(self._mode_clock_button)
+        mode_layout.addWidget(self._mode_stopwatch_button)
+        mode_layout.addStretch(1)
+        layout.addLayout(mode_layout)
+
+        self._time_display = QLabel("00:00:00")
+        self._time_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        time_font = self._time_display.font()
+        time_font.setPointSize(22)
+        time_font.setFamily("Segoe UI")
+        time_font.setWeight(QFont.Weight.Medium)
+        self._time_display.setFont(time_font)
+        self._time_display.setStyleSheet("color: #e2e8f0; background-color: rgba(15, 23, 42, 140); padding: 12px; border-radius: 16px;")
+        layout.addWidget(self._time_display)
+
+        layout.addWidget(self._analog_widget, stretch=1)
+
+        controls_layout = QHBoxLayout()
+        controls_layout.setSpacing(12)
+        controls_layout.addStretch(1)
+
+        self._start_button = QPushButton("Start")
+        self._stop_button = QPushButton("Stop")
+        self._reset_button = QPushButton("Reset")
+
+        self._start_button.clicked.connect(self._handle_start)
+        self._stop_button.clicked.connect(self._handle_stop)
+        self._reset_button.clicked.connect(self._handle_reset)
+
+        for button in (self._start_button, self._stop_button, self._reset_button):
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setMinimumWidth(100)
+            button.setStyleSheet(
+                "QPushButton {background-color: #38bdf8; color: #0f172a; padding: 10px 16px; border-radius: 12px; font-weight: 600;}"
+                "QPushButton:disabled {background-color: rgba(100, 116, 139, 120); color: rgba(226, 232, 240, 160);}"
+            )
+
+        self._stop_button.setStyleSheet(
+            "QPushButton {background-color: #ef4444; color: #0f172a; padding: 10px 16px; border-radius: 12px; font-weight: 600;}"
+            "QPushButton:disabled {background-color: rgba(100, 116, 139, 120); color: rgba(226, 232, 240, 160);}"
+        )
+        self._reset_button.setStyleSheet(
+            "QPushButton {background-color: #facc15; color: #0f172a; padding: 10px 16px; border-radius: 12px; font-weight: 600;}"
+            "QPushButton:disabled {background-color: rgba(100, 116, 139, 120); color: rgba(226, 232, 240, 160);}"
+        )
+
+        controls_layout.addWidget(self._start_button)
+        controls_layout.addWidget(self._stop_button)
+        controls_layout.addWidget(self._reset_button)
+        controls_layout.addStretch(1)
+        layout.addLayout(controls_layout)
+
+        self._ui_timer = QTimer(self)
+        self._ui_timer.setInterval(60)
+        self._ui_timer.timeout.connect(self._update_time_display)
+        self._ui_timer.start()
+
+        self.setCentralWidget(central)
+        self.resize(720, 840)
+
+        self._engine.set_mode(ChronographEngine.MODE_CLOCK)
+        self._sync_control_state()
+        self._update_time_display()
+
+    def _on_mode_selected(self, button_id: int) -> None:
+        if button_id == 0:
+            self._engine.set_mode(ChronographEngine.MODE_CLOCK)
+        else:
+            self._engine.set_mode(ChronographEngine.MODE_STOPWATCH)
+        self._analog_widget.update()
+        self._sync_control_state()
+        self._update_time_display()
+
+    def _handle_start(self) -> None:
+        self._engine.start_stopwatch()
+        self._sync_control_state()
+
+    def _handle_stop(self) -> None:
+        self._engine.stop_stopwatch()
+        self._sync_control_state()
+
+    def _handle_reset(self) -> None:
+        self._engine.reset_stopwatch()
+        self._sync_control_state()
+        self._update_time_display()
+        self._analog_widget.update()
+
+    def _sync_control_state(self) -> None:
+        if self._engine.mode == ChronographEngine.MODE_CLOCK:
+            self._start_button.setEnabled(False)
+            self._stop_button.setEnabled(False)
+            self._reset_button.setEnabled(False)
+            self._start_button.setText("Start")
+        else:
+            running = self._engine.is_stopwatch_running()
+            elapsed = self._engine.stopwatch_elapsed().total_seconds()
+            self._start_button.setEnabled(not running)
+            self._stop_button.setEnabled(running)
+            self._reset_button.setEnabled(elapsed > 0.0)
+            self._start_button.setText("Resume" if elapsed > 0.0 else "Start")
+
+    def _update_time_display(self) -> None:
+        if self._engine.mode == ChronographEngine.MODE_CLOCK:
+            now = self._engine.current_time()
+            self._time_display.setText(now.strftime("%H:%M:%S"))
+        else:
+            elapsed = self._engine.stopwatch_elapsed()
+            total_seconds_float = elapsed.total_seconds()
+            total_seconds = int(total_seconds_float)
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            seconds = total_seconds % 60
+            centiseconds = int((total_seconds_float - total_seconds) * 100)
+            centiseconds = min(centiseconds, 99)
+            self._time_display.setText(f"{hours:02d}:{minutes:02d}:{seconds:02d}.{centiseconds:02d}")
