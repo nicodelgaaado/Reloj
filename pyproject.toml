@@ -1,0 +1,40 @@
+[project]
+name = "reloj"
+version = "0.1.0"
+description = "Chronograph-style clock built with PySide6 and doubly circular linked lists."
+authors = [
+    {name = "nicolas", email = "nicolas.delgadop@campusuuc.edu.co"}
+]
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = ["pyside6>=6.10.0,<7.0.0"]
+
+[project.scripts]
+reloj = "reloj.__main__:main"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+hypothesis = ">=6.140.4,<7.0.0"
+mypy = ">=1.18.2,<2.0.0"
+pytest = ">=8.4.2,<9.0.0"
+pytest-qt = ">=4.5.0,<5.0.0"
+ruff = ">=0.14.0,<0.15.0"
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+check_untyped_defs = true
+disallow_incomplete_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = true
