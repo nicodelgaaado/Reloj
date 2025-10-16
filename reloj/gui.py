@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
@@ -14,10 +16,12 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPen,
+    QPixmap,
     QRadialGradient,
 )
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -30,23 +34,96 @@ from PySide6.QtWidgets import (
 from .engine import ChronographEngine, ChronographSnapshot
 
 
+@dataclass(frozen=True)
+class WatchSkin:
+    """Palette that describes how the chronograph should be rendered."""
+
+    name: str
+    background_gradient: tuple[str, str, str]
+    case_gradient: tuple[str, str, str]
+    dial_gradient: tuple[str, str, str]
+    highlight_color: str
+    accent_text_color: str
+    major_marker_color: str
+    minor_marker_color: str
+    minute_dot_color: str
+    inner_ring_color: str
+    numeral_color: str
+    hour_hand_color: str
+    minute_hand_color: str
+    second_hand_color: str
+    second_counter_weight_color: str
+    center_cap_border_color: str
+    center_cap_base_color: str
+    center_cap_fill_color: str
+    time_background_rgba: str
+    time_text_color: str
+    ui_accent_color: str
+    ui_accent_text_color: str
+    frame_image_path: Optional[str] = None
+
+
+ASSET_ROOT = Path(__file__).resolve().parent / "assets"
+FRAME_ASSET_ROOT = ASSET_ROOT / "frames"
+
+
+MODE_BUTTON_IDLE_BACKGROUND = "rgba(15, 23, 42, 160)"
+FRAME_DIAMETER_RATIO = 0.85
+DIAL_RADIUS_RATIO = 0.33
+
+WATCH_SKIN_PRESETS = [
+    WatchSkin(
+        name="Audemars Piguet",
+        background_gradient=("#0f172a", "#111b2c", "#1f2937"),
+        case_gradient=("#1f2937", "#101828", "#0b1120"),
+        dial_gradient=("#f8fafc", "#e2e8f0", "#cbd5f5"),
+        highlight_color="#38bdf8",
+        accent_text_color="#0f172a",
+        major_marker_color="#38bdf8",
+        minor_marker_color="#1f2937",
+        minute_dot_color="#94a3b8",
+        inner_ring_color="#d1d9e6",
+        numeral_color="#0f172a",
+        hour_hand_color="#1f2937",
+        minute_hand_color="#0f172a",
+        second_hand_color="#38bdf8",
+        second_counter_weight_color="#0ea5e9",
+        center_cap_border_color="#38bdf8",
+        center_cap_base_color="#0f172a",
+        center_cap_fill_color="#38bdf8",
+        time_background_rgba="rgba(15, 23, 42, 140)",
+        time_text_color="#e2e8f0",
+        ui_accent_color="#38bdf8",
+        ui_accent_text_color="#0f172a",
+        frame_image_path="audemars_piguet.png",
+    ),
+]
+
+WATCH_SKINS = {skin.name: skin for skin in WATCH_SKIN_PRESETS}
+DEFAULT_WATCH_SKIN = WATCH_SKIN_PRESETS[0]
+
+
 class AnalogChronographWidget(QWidget):
     """Widget that renders an analog chronograph face."""
 
     def __init__(
         self,
         engine: Optional[ChronographEngine] = None,
+        skin: Optional[WatchSkin] = None,
         refresh_interval_ms: int = 16,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self._engine = engine or ChronographEngine()
+        self._skin = skin or DEFAULT_WATCH_SKIN
         self._snapshot = self._engine.snapshot()
+        self._frame_pixmap: Optional[QPixmap] = None
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_tick)
         self._timer.start(refresh_interval_ms)
         self.setMinimumSize(360, 360)
         self.setAutoFillBackground(False)
+        self._load_frame_pixmap(self._skin)
 
     def _on_tick(self) -> None:
         self._snapshot = self._engine.snapshot()
@@ -61,20 +138,43 @@ class AnalogChronographWidget(QWidget):
         size = min(self.width(), self.height())
         center_x = self.width() / 2.0
         center_y = self.height() / 2.0
-        radius = size * 0.45
+        radius = size * DIAL_RADIUS_RATIO
 
         painter.translate(center_x, center_y)
 
+        self._draw_frame(painter, size)
         self._draw_face(painter, radius)
         self._draw_hands(painter, radius * 0.9, self._snapshot)
         self._draw_center_cap(painter)
 
+    def set_skin(self, skin: WatchSkin) -> None:
+        """Update the rendering palette for the analog widget."""
+        if self._skin == skin:
+            return
+        self._skin = skin
+        self._load_frame_pixmap(skin)
+        self.update()
+
+    def _load_frame_pixmap(self, skin: WatchSkin) -> None:
+        """Refresh cached frame artwork for the current skin."""
+        frame_path = skin.frame_image_path
+        if not frame_path:
+            self._frame_pixmap = None
+            return
+        candidate = FRAME_ASSET_ROOT / frame_path
+        if not candidate.exists():
+            self._frame_pixmap = None
+            return
+        pixmap = QPixmap(str(candidate))
+        self._frame_pixmap = pixmap if not pixmap.isNull() else None
+
     def _draw_background(self, painter: QPainter) -> None:
         painter.save()
         gradient = QLinearGradient(0, 0, 0, self.height())
-        gradient.setColorAt(0.0, QColor("#0f172a"))
-        gradient.setColorAt(0.45, QColor("#111b2c"))
-        gradient.setColorAt(1.0, QColor("#1f2937"))
+        top, mid, bottom = self._skin.background_gradient
+        gradient.setColorAt(0.0, QColor(top))
+        gradient.setColorAt(0.45, QColor(mid))
+        gradient.setColorAt(1.0, QColor(bottom))
         painter.fillRect(self.rect(), gradient)
 
         vignette = QRadialGradient(QPointF(self.width() / 2.0, self.height() / 2.0), max(self.width(), self.height()) * 0.65)
@@ -83,12 +183,34 @@ class AnalogChronographWidget(QWidget):
         painter.fillRect(self.rect(), vignette)
         painter.restore()
 
+    def _draw_frame(self, painter: QPainter, size: float) -> None:
+        if not self._frame_pixmap or self._frame_pixmap.isNull():
+            return
+        painter.save()
+        frame_diameter = int(size * FRAME_DIAMETER_RATIO)
+        if frame_diameter <= 0:
+            painter.restore()
+            return
+        scaled = self._frame_pixmap.scaled(
+            frame_diameter,
+            frame_diameter,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        painter.drawPixmap(
+            int(-scaled.width() / 2),
+            int(-scaled.height() / 2),
+            scaled,
+        )
+        painter.restore()
+
     def _draw_face(self, painter: QPainter, radius: float) -> None:
         painter.save()
         case_gradient = QRadialGradient(QPointF(0, 0), radius * 1.05)
-        case_gradient.setColorAt(0.0, QColor("#1f2937"))
-        case_gradient.setColorAt(0.55, QColor("#101828"))
-        case_gradient.setColorAt(1.0, QColor("#0b1120"))
+        outer, mid, inner = self._skin.case_gradient
+        case_gradient.setColorAt(0.0, QColor(outer))
+        case_gradient.setColorAt(0.55, QColor(mid))
+        case_gradient.setColorAt(1.0, QColor(inner))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(case_gradient)
         painter.drawEllipse(QRectF(-radius, -radius, radius * 2, radius * 2))
@@ -96,13 +218,14 @@ class AnalogChronographWidget(QWidget):
         dial_radius = radius * 0.9
         dial_rect = QRectF(-dial_radius, -dial_radius, dial_radius * 2, dial_radius * 2)
         dial_gradient = QRadialGradient(QPointF(0, 0), dial_radius)
-        dial_gradient.setColorAt(0.0, QColor("#f8fafc"))
-        dial_gradient.setColorAt(0.65, QColor("#e2e8f0"))
-        dial_gradient.setColorAt(1.0, QColor("#cbd5f5"))
+        center, mid_tone, edge = self._skin.dial_gradient
+        dial_gradient.setColorAt(0.0, QColor(center))
+        dial_gradient.setColorAt(0.65, QColor(mid_tone))
+        dial_gradient.setColorAt(1.0, QColor(edge))
         painter.setBrush(dial_gradient)
         painter.drawEllipse(dial_rect)
 
-        highlight_pen = QPen(QColor("#38bdf8"))
+        highlight_pen = QPen(QColor(self._skin.highlight_color))
         highlight_pen.setWidthF(radius * 0.012)
         highlight_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(highlight_pen)
@@ -114,13 +237,13 @@ class AnalogChronographWidget(QWidget):
             painter.rotate(index * 30.0)
             marker_length = radius * (0.16 if index % 3 == 0 else 0.1)
             marker_width = radius * (0.035 if index % 3 == 0 else 0.018)
-            color = QColor("#38bdf8") if index % 3 == 0 else QColor("#1f2937")
+            color = QColor(self._skin.major_marker_color if index % 3 == 0 else self._skin.minor_marker_color)
             painter.setBrush(color)
             rect = QRectF(-marker_width / 2.0, -(radius * 0.78), marker_width, marker_length)
             painter.drawRoundedRect(rect, marker_width * 0.4, marker_width * 0.4)
             painter.restore()
 
-        painter.setBrush(QColor("#94a3b8"))
+        painter.setBrush(QColor(self._skin.minute_dot_color))
         dot_radius = radius * 0.01
         for index in range(60):
             if index % 5 != 0:
@@ -129,13 +252,13 @@ class AnalogChronographWidget(QWidget):
                     QRectF(point.x() - dot_radius, point.y() - dot_radius, dot_radius * 2, dot_radius * 2)
                 )
 
-        inner_ring_pen = QPen(QColor("#d1d9e6"))
+        inner_ring_pen = QPen(QColor(self._skin.inner_ring_color))
         inner_ring_pen.setWidthF(radius * 0.006)
         painter.setPen(inner_ring_pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawEllipse(QRectF(-radius * 0.46, -radius * 0.46, radius * 0.92, radius * 0.92))
 
-        painter.setPen(QPen(QColor("#0f172a")))
+        painter.setPen(QPen(QColor(self._skin.numeral_color)))
         font = painter.font()
         font.setFamily("Segoe UI")
         font.setPointSizeF(radius * 0.16)
@@ -168,7 +291,7 @@ class AnalogChronographWidget(QWidget):
         hour_path.lineTo(max_radius * 0.022, -max_radius * 0.4)
         hour_path.quadTo(0.0, -max_radius * 0.52, -max_radius * 0.022, -max_radius * 0.4)
         hour_path.closeSubpath()
-        painter.setBrush(QColor("#1f2937"))
+        painter.setBrush(QColor(self._skin.hour_hand_color))
         painter.drawPath(hour_path)
         painter.restore()
 
@@ -180,13 +303,13 @@ class AnalogChronographWidget(QWidget):
         minute_path.lineTo(max_radius * 0.016, -max_radius * 0.64)
         minute_path.quadTo(0.0, -max_radius * 0.75, -max_radius * 0.016, -max_radius * 0.64)
         minute_path.closeSubpath()
-        painter.setBrush(QColor("#0f172a"))
+        painter.setBrush(QColor(self._skin.minute_hand_color))
         painter.drawPath(minute_path)
         painter.restore()
 
         painter.save()
         painter.rotate(snapshot.seconds_angle)
-        painter.setBrush(QColor("#38bdf8"))
+        painter.setBrush(QColor(self._skin.second_hand_color))
         second_path = QPainterPath()
         second_path.moveTo(-max_radius * 0.012, max_radius * 0.14)
         second_path.lineTo(max_radius * 0.012, max_radius * 0.14)
@@ -199,7 +322,7 @@ class AnalogChronographWidget(QWidget):
         painter.drawEllipse(QRectF(-pointer_radius, -max_radius * 0.82 - pointer_radius, pointer_radius * 2, pointer_radius * 2))
 
         counter_weight_radius = max_radius * 0.05
-        painter.setBrush(QColor("#0ea5e9"))
+        painter.setBrush(QColor(self._skin.second_counter_weight_color))
         painter.drawEllipse(QRectF(-counter_weight_radius, max_radius * 0.08, counter_weight_radius * 2, counter_weight_radius))
         painter.restore()
 
@@ -208,13 +331,13 @@ class AnalogChronographWidget(QWidget):
     def _draw_center_cap(self, painter: QPainter) -> None:
         painter.save()
         base_radius = min(self.width(), self.height()) * 0.032
-        painter.setPen(QPen(QColor("#38bdf8"), base_radius * 0.18))
-        painter.setBrush(QColor("#0f172a"))
+        painter.setPen(QPen(QColor(self._skin.center_cap_border_color), base_radius * 0.18))
+        painter.setBrush(QColor(self._skin.center_cap_base_color))
         painter.drawEllipse(QRectF(-base_radius, -base_radius, base_radius * 2, base_radius * 2))
 
         cap_radius = base_radius * 0.55
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#38bdf8"))
+        painter.setBrush(QColor(self._skin.center_cap_fill_color))
         painter.drawEllipse(QRectF(-cap_radius, -cap_radius, cap_radius * 2, cap_radius * 2))
         painter.restore()
 
@@ -233,7 +356,9 @@ class ChronographWindow(QMainWindow):
         super().__init__(parent)
         self.setWindowTitle("Chronograph Clock")
         self._engine = ChronographEngine()
-        self._analog_widget = AnalogChronographWidget(engine=self._engine)
+        self._available_skins = list(WATCH_SKINS.values())
+        self._active_skin = DEFAULT_WATCH_SKIN
+        self._analog_widget = AnalogChronographWidget(engine=self._engine, skin=self._active_skin)
         self._analog_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         central = QWidget(self)
@@ -251,13 +376,6 @@ class ChronographWindow(QMainWindow):
         self._mode_group.addButton(self._mode_stopwatch_button, 1)
         self._mode_clock_button.setChecked(True)
         self._mode_group.idClicked.connect(self._on_mode_selected)
-        mode_style = (
-            "QPushButton {background-color: rgba(15, 23, 42, 160); color: #e2e8f0; padding: 8px 18px; border-radius: 14px; font-weight: 600;}"
-            "QPushButton:checked {background-color: #38bdf8; color: #0f172a;}"
-        )
-        self._mode_clock_button.setStyleSheet(mode_style)
-        self._mode_stopwatch_button.setStyleSheet(mode_style)
-
         mode_layout = QHBoxLayout()
         mode_layout.setSpacing(12)
         mode_layout.addStretch(1)
@@ -266,6 +384,21 @@ class ChronographWindow(QMainWindow):
         mode_layout.addStretch(1)
         layout.addLayout(mode_layout)
 
+        self._skin_label = QLabel("Watch Skin")
+        self._skin_selector = QComboBox()
+        for skin in self._available_skins:
+            self._skin_selector.addItem(skin.name)
+        self._skin_selector.setCurrentText(self._active_skin.name)
+        self._skin_selector.currentTextChanged.connect(self._on_skin_selected)
+
+        skin_layout = QHBoxLayout()
+        skin_layout.setSpacing(8)
+        skin_layout.addStretch(1)
+        skin_layout.addWidget(self._skin_label)
+        skin_layout.addWidget(self._skin_selector)
+        skin_layout.addStretch(1)
+        layout.addLayout(skin_layout)
+
         self._time_display = QLabel("00:00:00")
         self._time_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
         time_font = self._time_display.font()
@@ -273,7 +406,6 @@ class ChronographWindow(QMainWindow):
         time_font.setFamily("Segoe UI")
         time_font.setWeight(QFont.Weight.Medium)
         self._time_display.setFont(time_font)
-        self._time_display.setStyleSheet("color: #e2e8f0; background-color: rgba(15, 23, 42, 140); padding: 12px; border-radius: 16px;")
         layout.addWidget(self._time_display)
 
         layout.addWidget(self._analog_widget, stretch=1)
@@ -293,25 +425,14 @@ class ChronographWindow(QMainWindow):
         for button in (self._start_button, self._stop_button, self._reset_button):
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setMinimumWidth(100)
-            button.setStyleSheet(
-                "QPushButton {background-color: #38bdf8; color: #0f172a; padding: 10px 16px; border-radius: 12px; font-weight: 600;}"
-                "QPushButton:disabled {background-color: rgba(100, 116, 139, 120); color: rgba(226, 232, 240, 160);}"
-            )
-
-        self._stop_button.setStyleSheet(
-            "QPushButton {background-color: #ef4444; color: #0f172a; padding: 10px 16px; border-radius: 12px; font-weight: 600;}"
-            "QPushButton:disabled {background-color: rgba(100, 116, 139, 120); color: rgba(226, 232, 240, 160);}"
-        )
-        self._reset_button.setStyleSheet(
-            "QPushButton {background-color: #facc15; color: #0f172a; padding: 10px 16px; border-radius: 12px; font-weight: 600;}"
-            "QPushButton:disabled {background-color: rgba(100, 116, 139, 120); color: rgba(226, 232, 240, 160);}"
-        )
 
         controls_layout.addWidget(self._start_button)
         controls_layout.addWidget(self._stop_button)
         controls_layout.addWidget(self._reset_button)
         controls_layout.addStretch(1)
         layout.addLayout(controls_layout)
+
+        self._apply_skin_to_ui()
 
         self._ui_timer = QTimer(self)
         self._ui_timer.setInterval(60)
@@ -334,6 +455,14 @@ class ChronographWindow(QMainWindow):
         self._sync_control_state()
         self._update_time_display()
 
+    def _on_skin_selected(self, skin_name: str) -> None:
+        skin = WATCH_SKINS.get(skin_name)
+        if skin is None or skin == self._active_skin:
+            return
+        self._active_skin = skin
+        self._analog_widget.set_skin(skin)
+        self._apply_skin_to_ui()
+
     def _handle_start(self) -> None:
         self._engine.start_stopwatch()
         self._sync_control_state()
@@ -347,6 +476,47 @@ class ChronographWindow(QMainWindow):
         self._sync_control_state()
         self._update_time_display()
         self._analog_widget.update()
+
+    def _apply_skin_to_ui(self) -> None:
+        skin = self._active_skin
+        mode_style = (
+            f"QPushButton {{background-color: {MODE_BUTTON_IDLE_BACKGROUND}; color: {skin.time_text_color}; padding: 8px 18px; "
+            f"border-radius: 14px; font-weight: 600;}}\n"
+            f"QPushButton:checked {{background-color: {skin.highlight_color}; color: {skin.accent_text_color};}}"
+        )
+        self._mode_clock_button.setStyleSheet(mode_style)
+        self._mode_stopwatch_button.setStyleSheet(mode_style)
+
+        self._time_display.setStyleSheet(
+            f"color: {skin.time_text_color}; background-color: {skin.time_background_rgba}; padding: 12px; border-radius: 16px;"
+        )
+
+        disabled_suffix = (
+            "\nQPushButton:disabled {background-color: rgba(100, 116, 139, 120); color: rgba(226, 232, 240, 160);}"
+        )
+        self._start_button.setStyleSheet(
+            f"QPushButton {{background-color: {skin.ui_accent_color}; color: {skin.ui_accent_text_color}; padding: 10px 16px; "
+            f"border-radius: 12px; font-weight: 600;}}"
+            f"{disabled_suffix}"
+        )
+        self._stop_button.setStyleSheet(
+            "QPushButton {background-color: #dc2626; color: #fef2f2; padding: 10px 16px; border-radius: 12px; font-weight: 600;}"
+            f"{disabled_suffix}"
+        )
+        self._reset_button.setStyleSheet(
+            "QPushButton {background-color: #facc15; color: #0f172a; padding: 10px 16px; border-radius: 12px; font-weight: 600;}"
+            f"{disabled_suffix}"
+        )
+
+        self._skin_label.setStyleSheet(f"color: {skin.time_text_color}; font-weight: 600;")
+        combo_style = (
+            f"QComboBox {{color: {skin.time_text_color}; background-color: rgba(15, 23, 42, 120); padding: 6px 12px; "
+            f"border-radius: 12px; border: 2px solid {skin.highlight_color}; selection-background-color: {skin.highlight_color}; "
+            f"selection-color: {skin.accent_text_color};}}\n"
+            f"QComboBox QAbstractItemView {{background-color: rgba(15, 23, 42, 230); color: {skin.time_text_color}; "
+            f"selection-background-color: {skin.highlight_color}; selection-color: {skin.accent_text_color}; border-radius: 8px;}}"
+        )
+        self._skin_selector.setStyleSheet(combo_style)
 
     def _sync_control_state(self) -> None:
         if self._engine.mode == ChronographEngine.MODE_CLOCK:
